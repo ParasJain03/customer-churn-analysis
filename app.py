@@ -104,7 +104,7 @@ st.info(str(customer["Retention_Recommendation"]))
 
 st.subheader("🤖 AI Retention Strategy")
 gemini_key = os.getenv("GEMINI_API_KEY")
-gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
+gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 if gemini_key and genai is not None:
     if st.button("Generate Personalized AI Strategy", type="primary"):
@@ -162,5 +162,5 @@ st.dataframe(
 )
 st.caption(
     "Random Forest predicts churn risk. Business rules recommend retention actions. "
-    "Gemini 3.1 Pro personalizes the communication when configured."
+    "Gemini 2.5 Flash personalizes the communication when configured."
 )
