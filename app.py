@@ -15,7 +15,9 @@ except ImportError:
     genai = None
 
 ROOT = Path(__file__).resolve().parent
-DATA_FILE = ROOT / "data" / "predictions" / "Retention_Recommendations.csv"
+RETENTION_FILE = ROOT / "data" / "predictions" / "Retention_Recommendations.csv"
+FULL_PREDICTION_FILE = ROOT / "data" / "predictions" / "All_Customer_Predictions.csv"
+RAW_FILE = ROOT / "data" / "raw" / "Customer_Data.csv"
 load_dotenv(ROOT / ".env")
 
 st.set_page_config(page_title="Telecom Retention AI", page_icon="📡", layout="wide")
@@ -24,30 +26,41 @@ st.caption("Use Case 12 — Churn Prediction + Personalized Retention Recommenda
 
 
 @st.cache_data
-def load_data():
-    if not DATA_FILE.exists():
+def load_csv(path):
+    if not path.exists():
         return pd.DataFrame()
-    return pd.read_csv(DATA_FILE)
+    return pd.read_csv(path)
 
 
-df = load_data()
-if df.empty:
+# Retention dashboard remains focused on predicted churners.
+retention_df = load_csv(RETENTION_FILE)
+# Q&A uses the complete prediction dataset so it can answer about all customers.
+full_df = load_csv(FULL_PREDICTION_FILE)
+raw_df = load_csv(RAW_FILE)
+
+if retention_df.empty:
     st.error("Retention_Recommendations.csv was not found.")
     st.code("python notebooks\\retention_recommendation.py")
     st.stop()
+
+if full_df.empty:
+    st.warning(
+        "The complete prediction dataset is not generated yet. Run "
+        "python notebooks\\generate_full_predictions.py so Ask Your Data can use every customer row."
+    )
 
 required_columns = {
     "Customer_ID", "Churn_Probability", "Churn_Probability_Percent",
     "Predicted_Churn", "Risk_Level", "Retention_Priority",
     "Retention_Recommendation",
 }
-missing = required_columns.difference(df.columns)
+missing = required_columns.difference(retention_df.columns)
 if missing:
-    st.error(f"Missing columns: {', '.join(sorted(missing))}")
+    st.error(f"Missing columns in retention data: {', '.join(sorted(missing))}")
     st.stop()
 
 st.sidebar.header("Customer Filters")
-filtered = df.copy()
+filtered = retention_df.copy()
 for column in ["Risk_Level", "Retention_Priority", "Contract", "State", "Internet_Type"]:
     if column in filtered.columns:
         values = sorted(filtered[column].dropna().astype(str).unique().tolist())
@@ -55,7 +68,7 @@ for column in ["Risk_Level", "Retention_Priority", "Contract", "State", "Interne
         filtered = filtered[filtered[column].astype(str).isin(selected)]
 
 if filtered.empty:
-    st.warning("No customers match the selected filters.")
+    st.warning("No predicted-churn customers match the selected filters.")
     st.stop()
 
 c1, c2, c3, c4 = st.columns(4)
@@ -66,7 +79,8 @@ with c2:
 with c3:
     st.metric("High-Priority Customers", f"{(filtered['Retention_Priority'].astype(str) == 'High').sum():,}")
 with c4:
-    st.metric("Average Churn Probability", f"{pd.to_numeric(filtered['Churn_Probability'], errors='coerce').mean():.1%}")
+    p = pd.to_numeric(filtered["Churn_Probability"], errors="coerce")
+    st.metric("Average Churn Probability", f"{p.mean():.1%}")
 
 st.divider()
 
@@ -91,8 +105,7 @@ with right:
         str(c).replace("_", " "): str(customer[c])
         for c in filtered.columns if c != "Customer_ID"
     }
-    profile_df = pd.DataFrame(list(profile.items()), columns=["Attribute", "Value"])
-    st.dataframe(profile_df, width="stretch", hide_index=True)
+    st.dataframe(pd.DataFrame(list(profile.items()), columns=["Attribute", "Value"]), width="stretch", hide_index=True)
 
 st.subheader("🎯 Retention Recommendation")
 st.info(str(customer["Retention_Recommendation"]))
@@ -105,11 +118,11 @@ if gemini_key and genai is not None:
     if st.button("Generate Personalized AI Strategy", type="primary"):
         strategy_prompt = f"""
 You are a telecom customer-retention assistant. Use ONLY the supplied customer data.
-Do not invent discounts, prices, problems, policies, or customer facts. Treat churn probability
-as a model estimate, not a certainty. Use the supplied rule-based recommendation as the action
-baseline. Do not expose Customer_ID in the customer-facing message.
+Never invent discounts, prices, problems, policies, or customer facts. Treat churn probability
+as a model estimate, not a certainty. Use the supplied rule-based recommendation as the action baseline.
+Do not expose Customer_ID in the customer-facing message.
 Return exactly: Risk Summary, Recommended Retention Strategy, Customer Message, Agent Talking Points.
-Keep the language professional and simple.
+Use simple professional English.
 
 Customer data:
 {json.dumps({k: str(customer[k]) for k in customer.index}, default=str)}
@@ -123,82 +136,120 @@ Customer data:
             st.error(f"Gemini request failed: {exc}")
 else:
     st.warning("GenAI is not connected. Set GEMINI_API_KEY in .env.")
-    st.markdown("**Rule-based strategy:** " + str(customer["Retention_Recommendation"]))
 
 st.divider()
 
-# ---------- Dynamic actual-data analytics ----------
+# -----------------------------------------------------------------------------
+# AI DATA & RETENTION ASSISTANT
+# -----------------------------------------------------------------------------
 
-def column_profile(data):
-    result = {}
-    for col in data.columns:
-        s = data[col]
-        numeric = pd.to_numeric(s, errors="coerce")
-        if numeric.notna().mean() >= 0.8:
-            vals = numeric.dropna()
-            if len(vals):
-                result[col] = {
-                    "type": "numeric",
-                    "non_null": int(vals.size),
-                    "unique": int(s.nunique(dropna=True)),
-                    "average": round(float(vals.mean()), 3),
-                    "min": round(float(vals.min()), 3),
-                    "max": round(float(vals.max()), 3),
-                }
-        else:
-            counts = s.fillna("Unknown").astype(str).value_counts()
-            result[col] = {
-                "type": "categorical",
-                "non_null": int(s.notna().sum()),
-                "unique": int(s.nunique(dropna=True)),
-                "top_values": {str(k): int(v) for k, v in counts.head(15).items()},
-            }
-    return result
-
-
-def churn_segment_insights(data):
-    insights = {}
-    churn = data[data["Predicted_Churn"].astype(str).isin(["1", "True", "true"])].copy()
-    insights["total_rows"] = int(len(data))
-    insights["predicted_churners"] = int(len(churn))
-    insights["churn_rate_in_current_view"] = round(len(churn) / len(data), 4) if len(data) else 0
-    for col in data.columns:
-        if col in {"Customer_ID", "Retention_Recommendation"}:
-            continue
-        if data[col].dtype == "object" or data[col].nunique(dropna=True) <= 20:
-            all_counts = data[col].fillna("Unknown").astype(str).value_counts()
-            churn_counts = churn[col].fillna("Unknown").astype(str).value_counts() if len(churn) else pd.Series(dtype=int)
-            rows = []
-            for value, total in all_counts.head(15).items():
-                c = int(churn_counts.get(value, 0))
-                rows.append({
-                    "value": str(value),
-                    "customers": int(total),
-                    "predicted_churners": c,
-                    "predicted_churn_rate": round(c / int(total), 4) if total else 0,
-                })
-            insights[col] = rows
-    return insights
-
-
-def find_customer_from_question(question, data):
+def find_customer(question, data):
+    if data.empty or "Customer_ID" not in data.columns:
+        return None
     q = question.lower()
-    ids = data["Customer_ID"].astype(str).tolist()
-    for cid in ids:
+    for cid in data["Customer_ID"].astype(str):
         if cid.lower() in q:
             return data[data["Customer_ID"].astype(str) == cid].iloc[0]
-    # Also support a customer id typed with spaces/punctuation removed.
-    compact_q = re.sub(r"[^a-z0-9]", "", q)
-    for cid in ids:
-        if re.sub(r"[^a-z0-9]", "", cid.lower()) in compact_q:
+    compact = re.sub(r"[^a-z0-9]", "", q)
+    for cid in data["Customer_ID"].astype(str):
+        if re.sub(r"[^a-z0-9]", "", cid.lower()) in compact:
             return data[data["Customer_ID"].astype(str) == cid].iloc[0]
     return None
 
 
+def build_actual_context(data):
+    """Create compact facts from the complete prediction dataset.
+
+    Python performs the calculations. Gemini only explains the resulting facts.
+    """
+    context = {
+        "total_customers": int(len(data)),
+        "columns_available": [str(c) for c in data.columns],
+    }
+
+    if "Predicted_Churn" in data.columns:
+        pred = pd.to_numeric(data["Predicted_Churn"], errors="coerce").fillna(0)
+        churn = data[pred == 1]
+        context["predicted_churners"] = int(len(churn))
+        context["predicted_churn_rate"] = round(float(len(churn) / len(data)), 4) if len(data) else 0
+    else:
+        churn = pd.DataFrame()
+
+    if "Risk_Level" in data.columns:
+        context["risk_counts"] = data["Risk_Level"].fillna("Unknown").astype(str).value_counts().to_dict()
+    if "Retention_Priority" in data.columns:
+        context["priority_counts"] = data["Retention_Priority"].fillna("Unknown").astype(str).value_counts().to_dict()
+
+    # Every available column is represented. This makes Q&A dynamic rather than hard-coded.
+    column_facts = {}
+    for col in data.columns:
+        s = data[col]
+        numeric = pd.to_numeric(s, errors="coerce")
+        if numeric.notna().mean() >= 0.8:
+            values = numeric.dropna()
+            if len(values):
+                column_facts[col] = {
+                    "type": "numeric",
+                    "non_null": int(len(values)),
+                    "unique": int(s.nunique(dropna=True)),
+                    "average": round(float(values.mean()), 3),
+                    "minimum": round(float(values.min()), 3),
+                    "maximum": round(float(values.max()), 3),
+                }
+        else:
+            counts = s.fillna("Unknown").astype(str).value_counts()
+            column_facts[col] = {
+                "type": "categorical",
+                "non_null": int(s.notna().sum()),
+                "unique": int(s.nunique(dropna=True)),
+                "values": {str(k): int(v) for k, v in counts.head(30).items()},
+            }
+
+            # For categorical columns, provide actual churn rate for every value.
+            if len(churn) and col in churn.columns:
+                churn_counts = churn[col].fillna("Unknown").astype(str).value_counts()
+                total_counts = s.fillna("Unknown").astype(str).value_counts()
+                segment = {}
+                for value, total in total_counts.head(30).items():
+                    c = int(churn_counts.get(value, 0))
+                    segment[str(value)] = {
+                        "customers": int(total),
+                        "predicted_churners": c,
+                        "predicted_churn_rate": round(c / int(total), 4) if total else 0,
+                    }
+                column_facts[col]["prediction_by_value"] = segment
+
+    context["columns"] = column_facts
+
+    # Useful numeric relationships calculated directly by Python.
+    numeric_cols = []
+    for col in data.columns:
+        values = pd.to_numeric(data[col], errors="coerce")
+        if values.notna().mean() >= 0.8:
+            numeric_cols.append(col)
+    if numeric_cols and "Predicted_Churn" in data.columns:
+        comparison = {}
+        pred = pd.to_numeric(data["Predicted_Churn"], errors="coerce").fillna(0)
+        for col in numeric_cols:
+            values = pd.to_numeric(data[col], errors="coerce")
+            comparison[col] = {
+                "average_all_customers": round(float(values.mean()), 3) if values.notna().any() else None,
+                "average_predicted_churners": round(float(values[pred == 1].mean()), 3) if (pred == 1).any() else None,
+            }
+        context["numeric_comparison_churners_vs_all"] = comparison
+
+    return context
+
+
 st.subheader("💬 Ask Your Data")
+if not full_df.empty:
+    st.success(f"AI Q&A is connected to the complete prediction dataset: {len(full_df):,} customer rows.")
+else:
+    st.warning("Run the full prediction script first. Q&A is not yet using the complete customer dataset.")
+
 st.caption(
-    "Ask about any available column, customer row, prediction, segment, or business insight. "
-    "Python calculates facts from the actual prediction dataset; Gemini explains them in simple English."
+    "Ask about any column, any customer row, predictions, segments, comparisons, or retention insights. "
+    "Python calculates facts from the complete prediction dataset; Gemini explains them in simple English."
 )
 
 question = st.text_input(
@@ -210,78 +261,70 @@ question = st.text_input(
 if st.button("Ask Gemini", type="secondary") and question.strip():
     if not gemini_key or genai is None:
         st.warning("GenAI is not connected. Set GEMINI_API_KEY in .env.")
+    elif full_df.empty:
+        st.error("Complete prediction data is missing. Run generate_full_predictions.py first.")
     else:
-        data = filtered.copy()
-        profiles = column_profile(data)
-        insights = churn_segment_insights(data)
-        row = find_customer_from_question(question, data)
-        row_context = None
-        if row is not None:
-            row_context = {str(k): str(v) for k, v in row.items()}
+        qa_data = full_df.copy()
+        actual_context = build_actual_context(qa_data)
+        row = find_customer(question, qa_data)
+        row_context = {str(k): str(v) for k, v in row.items()} if row is not None else None
 
-        # Compact actual-data context. No fabricated values are supplied to the LLM.
-        actual_context = {
-            "current_filtered_rows": int(len(data)),
-            "columns_available": [str(c) for c in data.columns],
-            "column_profiles": profiles,
-            "prediction_insights": insights,
-            "selected_customer_row": {str(k): str(v) for k, v in customer.items()},
-            "customer_row_found_from_question": row_context,
-        }
+        prompt = f"""
+You are an AI Data & Retention Analyst for a telecom churn prediction project.
+Answer the user's question in SIMPLE ENGLISH using ONLY the actual-data context below.
 
-        qa_prompt = f"""
-You are the AI Data & Retention Analyst for a telecom churn prediction application.
-Answer the user's question using ONLY the actual-data context below.
-
-CORE RULES:
-1. Never invent or estimate a number that is not present or directly calculable from the supplied data.
-2. The current CSV is the prediction/retention dataset. Explain that results refer to the current filtered view.
-3. You may answer questions about ANY available column listed in columns_available.
-4. You may answer customer/row questions when the matching row is supplied.
-5. For a category, use prediction_insights[<column>] where possible. It contains total customers,
-   predicted churners, and predicted churn rate for each value.
-6. For numeric columns, use column_profiles for average/min/max.
-7. For questions asking "which", compare the supplied actual values and identify the highest/lowest.
-8. For questions asking "why", use the customer's actual fields and retention recommendation. Do not claim causation;
-   say "the model/rule engine identifies this as a signal".
-9. Do not expose Customer_ID unless the user explicitly asks for it.
-10. Use simple English. Give the direct answer first, then 1-3 useful insights.
-11. If the requested information is not available, say exactly which column/data is missing.
-12. Never claim that correlation or a feature caused churn unless the supplied data explicitly proves it.
+IMPORTANT:
+- The complete prediction dataset contains ALL customer rows, not just predicted churners.
+- Answer from the full dataset unless the user explicitly asks about the dashboard's filtered retention view.
+- Never invent a number, row, category, or business fact.
+- Python calculated all counts, rates, averages, minimums and maximums in the context.
+- For categorical questions, use columns.<column>.prediction_by_value when asking about churn rate by category.
+- For questions such as "how many male customers are predicted to churn", use the Gender prediction_by_value entry.
+- For questions such as "which state has the highest churn rate", compare prediction_by_value rates.
+- For numeric comparisons, use numeric_comparison_churners_vs_all.
+- For customer questions, use the matching customer row supplied below.
+- If a requested column does not exist, say that the column is not available.
+- If a requested row/customer does not exist, say it was not found.
+- Do not claim a feature caused churn. Say it is a model-associated signal when appropriate.
+- Do not expose Customer_ID unless the user explicitly asks for it.
+- Give the direct answer first. Then give 1-3 useful insights.
+- If the user asks for a list, provide a concise list/table based only on the supplied facts.
 
 USER QUESTION:
 {question}
 
-ACTUAL DATA CONTEXT:
+COMPLETE ACTUAL PREDICTION DATA FACTS:
 {json.dumps(actual_context, default=str)}
+
+MATCHING CUSTOMER ROW, IF FOUND:
+{json.dumps(row_context, default=str)}
 """
         try:
             client = genai.Client(api_key=gemini_key)
-            response = client.models.generate_content(model=gemini_model, contents=qa_prompt)
-            st.success("Answer generated from the actual filtered prediction data.")
+            response = client.models.generate_content(model=gemini_model, contents=prompt)
+            st.success("Answer generated from the complete customer prediction dataset.")
             st.markdown(response.text)
         except Exception as exc:
             st.error(f"Gemini request failed: {exc}")
 
-# Automatic business insights from the actual current filtered data.
 st.divider()
-st.subheader("📈 AI-Ready Data Insights")
-st.caption("These insights are calculated directly from the current filtered prediction dataset.")
+st.subheader("📈 Full-Data Prediction Insights")
+if not full_df.empty:
+    total = len(full_df)
+    pred = pd.to_numeric(full_df["Predicted_Churn"], errors="coerce").fillna(0)
+    churn_count = int((pred == 1).sum())
+    avg_prob = pd.to_numeric(full_df["Churn_Probability"], errors="coerce").mean()
+    a, b, c, d = st.columns(4)
+    with a:
+        st.metric("All Customer Rows", f"{total:,}")
+    with b:
+        st.metric("Predicted Churners", f"{churn_count:,}")
+    with c:
+        st.metric("Predicted Churn Rate", f"{churn_count / total:.1%}")
+    with d:
+        st.metric("Average Churn Probability", f"{avg_prob:.1%}")
 
-churn = filtered[filtered["Predicted_Churn"].astype(str).isin(["1", "True", "true"])].copy()
-prob = pd.to_numeric(filtered["Churn_Probability"], errors="coerce")
-ins1, ins2, ins3 = st.columns(3)
-with ins1:
-    st.write("**Current prediction view**")
-    st.write(f"{len(filtered):,} customers are in the current filtered view, with {len(churn):,} predicted churners.")
-with ins2:
-    st.write("**Risk concentration**")
-    high = int((filtered["Risk_Level"].astype(str) == "High").sum())
-    st.write(f"{high:,} customers are classified as High Risk in this view.")
-with ins3:
-    st.write("**Average model probability**")
-    st.write(f"{prob.mean():.1%} across the current filtered view.")
-
+st.divider()
 st.subheader("📊 Retention Priority List")
 show_columns = [
     "Customer_ID", "Churn_Probability_Percent", "Risk_Level", "Retention_Priority",
@@ -294,6 +337,6 @@ st.dataframe(
     hide_index=True,
 )
 st.caption(
-    "Random Forest predicts churn risk. Business rules recommend retention actions. "
-    "Gemini 2.5 Flash personalizes communication and explains actual data insights."
+    "Random Forest predicts churn risk for all customers. The retention dashboard focuses on predicted churners. "
+    "Gemini 2.5 Flash explains the complete prediction dataset and personalizes retention communication."
 )
