@@ -90,10 +90,13 @@ with right:
         "Internet_Type", "Premium_Support", "Value_Deal", "Payment_Method"
     ]
     profile = {
-        c.replace("_", " "): customer[c]
+        c.replace("_", " "): str(customer[c])
         for c in profile_columns if c in customer.index
     }
-    st.dataframe(pd.DataFrame([profile]).T.rename(columns={0: "Value"}), use_container_width=True)
+    profile_df = pd.DataFrame(
+        list(profile.items()), columns=["Attribute", "Value"]
+    )
+    st.dataframe(profile_df, width="stretch", hide_index=True)
 
 st.subheader("🎯 Retention Recommendation")
 st.info(str(customer["Retention_Recommendation"]))
@@ -160,7 +163,7 @@ show_columns = [
 show_columns = [c for c in show_columns if c in filtered.columns]
 st.dataframe(
     filtered[show_columns].sort_values("Churn_Probability_Percent", ascending=False),
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
 )
 st.caption(
