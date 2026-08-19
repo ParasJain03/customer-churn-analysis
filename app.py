@@ -115,7 +115,7 @@ if gemini_key and genai is not None:
             "model estimate, not a certainty. Do not predict churn yourself. Use the supplied "
             "rule-based recommendation as the primary action guidance. Return exactly these "
             "sections: Risk Summary, Recommended Retention Strategy, Customer Message, and "
-            "Agent Talking Points. Keep the customer message professional and concise."
+            "Agent Talking Points. Do not expose Customer_ID in the customer-facing message."
         )
         customer_context = {
             "customer_id": str(customer.get("Customer_ID", "")),
@@ -149,6 +149,96 @@ else:
     st.markdown("**Rule-based strategy:** " + str(customer["Retention_Recommendation"]))
 
 st.divider()
+
+st.subheader("💬 Ask Your Data")
+st.caption("Ask questions about the filtered customer data and predictions. Python calculates numeric results; Gemini explains them in simple English.")
+question = st.text_input(
+    "Ask a question",
+    placeholder="Example: How many high-risk customers are from Maharashtra?",
+    key="data_question",
+)
+
+if st.button("Ask Gemini", type="secondary") and question.strip():
+    if not gemini_key or genai is None:
+        st.warning("GenAI is not connected. Set GEMINI_API_KEY in .env.")
+    else:
+        numeric_probability = pd.to_numeric(filtered["Churn_Probability"], errors="coerce")
+        summary = {
+            "rows_in_current_filter": int(len(filtered)),
+            "predicted_churners": int((filtered["Predicted_Churn"] == 1).sum()),
+            "high_risk_customers": int((filtered["Risk_Level"].astype(str) == "High").sum()),
+            "medium_risk_customers": int((filtered["Risk_Level"].astype(str) == "Medium").sum()),
+            "high_priority_customers": int((filtered["Retention_Priority"].astype(str) == "High").sum()),
+            "average_churn_probability": float(numeric_probability.mean()) if numeric_probability.notna().any() else None,
+        }
+
+        if "State" in filtered.columns:
+            summary["high_risk_by_state"] = (
+                filtered[filtered["Risk_Level"].astype(str) == "High"]
+                .groupby("State")
+                .size()
+                .sort_values(ascending=False)
+                .head(25)
+                .to_dict()
+            )
+        if "Contract" in filtered.columns:
+            summary["churners_by_contract"] = (
+                filtered[filtered["Predicted_Churn"] == 1]
+                .groupby("Contract")
+                .size()
+                .sort_values(ascending=False)
+                .to_dict()
+            )
+        if "Retention_Recommendation" in filtered.columns:
+            summary["retention_recommendation_counts"] = (
+                filtered["Retention_Recommendation"].astype(str).value_counts().head(15).to_dict()
+            )
+
+        selected_customer_context = {
+            key: str(customer.get(key, ""))
+            for key in [
+                "Customer_ID", "State", "Contract", "Tenure_in_Months", "Monthly_Charge",
+                "Internet_Type", "Premium_Support", "Value_Deal", "Payment_Method",
+                "Churn_Probability", "Churn_Probability_Percent", "Predicted_Churn",
+                "Risk_Level", "Retention_Priority", "Retention_Recommendation"
+            ]
+            if key in customer.index
+        }
+
+        qa_prompt = f"""
+You are an AI analytics assistant for a telecom churn and retention application.
+Answer the user's question in simple English.
+
+Rules:
+- Use only the supplied data summary and selected-customer data.
+- Do not invent numbers, customer facts, or business policies.
+- If the supplied data is not enough to answer, clearly say so.
+- For numeric questions, trust the Python-calculated values in the data summary.
+- Explain the answer briefly and clearly for a non-technical business user.
+- If the question is about the selected customer, use the selected-customer data.
+- Do not expose internal Customer_ID unless the user explicitly asks for it.
+
+User question:
+{question}
+
+Python-calculated data summary:
+{summary}
+
+Selected customer data:
+{selected_customer_context}
+"""
+        try:
+            client = genai.Client(api_key=gemini_key)
+            response = client.models.generate_content(
+                model=gemini_model,
+                contents=qa_prompt,
+            )
+            st.success("Answer generated from the current customer data.")
+            st.markdown(response.text)
+        except Exception as exc:
+            st.error(f"Gemini request failed: {exc}")
+
+st.divider()
 st.subheader("📊 Retention Priority List")
 show_columns = [
     "Customer_ID", "Churn_Probability_Percent", "Risk_Level", "Retention_Priority",
@@ -162,5 +252,5 @@ st.dataframe(
 )
 st.caption(
     "Random Forest predicts churn risk. Business rules recommend retention actions. "
-    "Gemini 2.5 Flash personalizes the communication when configured."
+    "Gemini 2.5 Flash personalizes communication and explains data insights when configured."
 )
