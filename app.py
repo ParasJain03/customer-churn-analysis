@@ -96,9 +96,7 @@ with right:
         c.replace("_", " "): str(customer[c])
         for c in profile_columns if c in customer.index
     }
-    profile_df = pd.DataFrame(
-        list(profile.items()), columns=["Attribute", "Value"]
-    )
+    profile_df = pd.DataFrame(list(profile.items()), columns=["Attribute", "Value"])
     st.dataframe(profile_df, width="stretch", hide_index=True)
 
 st.subheader("🎯 Retention Recommendation")
@@ -106,7 +104,7 @@ st.info(str(customer["Retention_Recommendation"]))
 
 st.subheader("🤖 AI Retention Strategy")
 gemini_key = os.getenv("GEMINI_API_KEY")
-gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
 
 if gemini_key and genai is not None:
     if st.button("Generate Personalized AI Strategy", type="primary"):
@@ -139,7 +137,7 @@ if gemini_key and genai is not None:
                 model=gemini_model,
                 contents=f"{system_prompt}\n\n{prompt}",
             )
-            st.success("Gemini AI strategy generated successfully.")
+            st.success(f"Gemini AI strategy generated successfully using {gemini_model}.")
             st.markdown(response.text)
         except Exception as exc:
             st.error(f"Gemini request failed: {exc}")
@@ -164,5 +162,5 @@ st.dataframe(
 )
 st.caption(
     "Random Forest predicts churn risk. Business rules recommend retention actions. "
-    "Gemini 2.5 Pro personalizes the communication when configured."
+    "Gemini 3.1 Pro personalizes the communication when configured."
 )
