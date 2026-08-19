@@ -1,8 +1,8 @@
-# 📊 AI-Driven Telecom Customer Churn Prediction & Retention Recommendation
+# 📡 AI-Driven Telecom Customer Churn Prediction & Personalized Retention Recommendation
 
-🚀 **End-to-End Telecom Analytics | SQL | Power BI | Machine Learning | Retention Intelligence**
+🚀 **End-to-End Telecom Analytics | SQL | Power BI | Machine Learning | Retention Intelligence | Streamlit | GenAI**
 
-An end-to-end telecom customer analytics system that processes customer data using **SQL Server**, analyzes churn in **Power BI**, predicts future churn using **Random Forest**, and generates **personalized retention recommendations** for high-risk customers.
+An end-to-end telecom customer analytics and retention decision-support system. The project processes customer data using **SQL Server**, analyzes churn using **Power BI**, predicts future churn using **Random Forest**, converts model probability into risk and retention priority, recommends business actions, and provides an optional **GenAI-powered personalized retention strategy** through a Streamlit application.
 
 This project is extended for **Use Case 12: Telecom Customer Churn Prediction & Retention Recommendation**.
 
@@ -12,14 +12,16 @@ This project is extended for **Use Case 12: Telecom Customer Churn Prediction & 
 
 Telecom companies need to identify customers who are likely to leave and decide **what retention action should be taken for each high-risk customer**.
 
-This project therefore has two connected stages:
+The solution therefore has four layers:
 
 1. **Churn Prediction** — estimate the probability that a customer will churn.
-2. **Retention Recommendation** — convert churn risk and customer attributes into an actionable retention strategy.
+2. **Risk & Priority** — convert probability into an operational risk level and retention priority.
+3. **Retention Recommendation** — map customer signals to actionable retention interventions.
+4. **GenAI Personalization** — turn the structured recommendation into a customer-specific strategy/message when an approved LLM endpoint is configured.
 
 ---
 
-# 🔄 Updated End-to-End Pipeline
+# 🔄 Complete End-to-End Pipeline
 
 ```text
 Raw Telecom Dataset
@@ -38,11 +40,15 @@ Churn Probability
         ↓
 Risk Segmentation
         ↓
-Retention Recommendation Engine
-        ↓
 Retention Priority
         ↓
-Power BI / GenAI-ready Output
+Rule-Based Retention Recommendation
+        ↓
+Retention_Recommendations.csv
+        ↓
+Streamlit Customer Retention App
+        ↓
+Optional GenAI Personalized Strategy
 ```
 
 ---
@@ -75,16 +81,19 @@ Random Forest Training        Future Churn Prediction
             Risk Level
        Low / Medium / High
                   ↓
-      Retention Recommendation
-                  ↓
        Retention Priority
                   ↓
-    Retention_Recommendations.csv
+      Retention Recommendation
                   ↓
-        Power BI / GenAI
+    Retention_Recommendations.csv
+            ┌─────┴─────┐
+            ↓           ↓
+        Power BI    Streamlit
+                        ↓
+                       GenAI
 ```
 
-The existing SQL ETL creates `vw_ChurnData` for `Stayed/Churned` customers and `vw_JoinData` for `Joined` customers. The new retention workflow uses the same architecture rather than replacing it.
+The existing SQL ETL creates `vw_ChurnData` for `Stayed/Churned` customers and `vw_JoinData` for `Joined` customers. The new workflow reuses that architecture rather than replacing it.
 
 ---
 
@@ -103,13 +112,24 @@ The existing **Random Forest Classifier** is retained.
 7. Evaluate classification performance
 8. Generate **churn probability** using `predict_proba()`
 
-The original project already achieved approximately **87–88% accuracy** in the stored notebook evaluation.
+### Latest local validation
+
+The Use Case 12 pipeline was successfully executed on the project data with:
+
+```text
+Accuracy: 86%
+Churn precision: 84%
+Churn recall: 63%
+Churn F1: 72%
+ROC-AUC: 0.905
+Predicted churners: 371
+```
+
+These metrics are from the local execution of `notebooks/retention_recommendation.py` and should be regenerated when the data/model changes.
 
 ---
 
 # 📈 Risk Segmentation
-
-The model probability is converted into an operational risk level:
 
 | Churn Probability | Risk Level |
 |---:|---|
@@ -117,13 +137,13 @@ The model probability is converted into an operational risk level:
 | `40–70%` | Medium |
 | `>= 70%` | High |
 
-This allows retention teams to prioritize customers rather than treating every predicted churner equally.
+Risk is an operational category; a high-risk customer is **not guaranteed** to churn.
 
 ---
 
 # 🎯 Retention Recommendation Engine
 
-The new `notebooks/retention_recommendation.py` module adds a rule-based business layer after ML prediction.
+`notebooks/retention_recommendation.py` adds a deterministic business-rule layer after ML prediction.
 
 Examples:
 
@@ -142,7 +162,7 @@ The engine produces both a **retention recommendation** and a **retention priori
 
 # 📄 Prediction Output
 
-The new workflow writes:
+The workflow writes:
 
 ```text
 data/predictions/Retention_Recommendations.csv
@@ -160,11 +180,72 @@ Retention_Priority
 Retention_Recommendation
 ```
 
-This output can be imported into Power BI and can also be passed to a future GenAI layer to generate natural-language retention strategies.
+---
+
+# 🖥️ Streamlit Application
+
+The repository now includes:
+
+```text
+app.py
+```
+
+The application provides:
+
+* Customer filtering
+* Churn probability
+* Risk level
+* Retention priority
+* Customer profile
+* Rule-based retention recommendation
+* Retention priority list
+* Optional GenAI personalized strategy
+
+Run it from the repository root:
+
+```bash
+streamlit run app.py
+```
+
+The app reads the generated `data/predictions/Retention_Recommendations.csv` file.
 
 ---
 
-# 📊 Dashboard
+# 🤖 GenAI Integration
+
+The GenAI layer is implemented in `app.py` using the OpenAI Python client and an OpenAI-compatible chat endpoint.
+
+The LLM **does not predict churn**. The Random Forest model remains responsible for churn prediction. The LLM receives the model output, customer attributes, risk level, priority, and rule-based recommendation and converts them into a concise retention strategy.
+
+```text
+Random Forest
+      ↓
+Churn Probability
+      ↓
+Business Rules
+      ↓
+Retention Recommendation
+      ↓
+LLM
+      ↓
+Personalized Retention Strategy
+```
+
+Configure the optional integration using environment variables:
+
+```text
+OPENAI_API_KEY=your_key
+OPENAI_BASE_URL=optional_openai_compatible_endpoint
+OPENAI_MODEL=your_model
+```
+
+Use `.env.example` as the template. **Never commit a real API key to GitHub.**
+
+If no API key is configured, the Streamlit application still works and displays the deterministic retention recommendation.
+
+---
+
+# 📊 Power BI Dashboard
 
 The existing Power BI dashboard continues to provide:
 
@@ -176,16 +257,17 @@ The existing Power BI dashboard continues to provide:
 * Churn reasons
 * Predicted churn customers
 
-For Use Case 12, add a **Retention Recommendation** page using `Retention_Recommendations.csv` with:
+For Use Case 12, `powerbi/UseCase12_Retention_Dashboard.md` documents the additional Retention Intelligence page using `Retention_Recommendations.csv`.
 
-* High-risk customer count
+Recommended visuals:
+
+* Predicted churners
+* High-risk customers
+* High-priority customers
 * Average churn probability
-* Customer ID
-* Churn probability
-* Risk level
-* Retention priority
-* Recommended action
-* Recommendation distribution
+* Risk distribution
+* Retention recommendation distribution
+* Customer retention priority table
 
 ---
 
@@ -194,21 +276,20 @@ For Use Case 12, add a **Retention Recommendation** page using `Retention_Recomm
 ```text
 customer-churn-analysis
 │
+├── app.py
+├── requirements.txt
+├── .env.example
+│
 ├── dashboard
 │   └── churn_dashboard.pbix
 │
 ├── dashboard_Images
-│   ├── churn_analysis.png
-│   ├── churn_prediction.png
-│   └── churn_reason.png
 │
 ├── data
 │   ├── raw
 │   │   └── Customer_Data.csv
-│   │
 │   ├── processed
 │   │   └── Prediction_Data.xlsx
-│   │
 │   └── predictions
 │       ├── Predictions.csv.xlsx
 │       └── Retention_Recommendations.csv
@@ -220,8 +301,14 @@ customer-churn-analysis
 ├── sql
 │   └── churn_etl.sql
 │
+├── powerbi
+│   └── UseCase12_Retention_Dashboard.md
+│
+├── genai
+│   ├── README.md
+│   └── retention_prompt_template.md
+│
 ├── doc
-│   └── project_architecture.md
 │
 └── README.md
 ```
@@ -230,61 +317,62 @@ customer-churn-analysis
 
 # 🚀 How to Run
 
-### 1️⃣ Setup SQL Server
-
-Run:
-
-```text
-sql/churn_etl.sql
-```
-
-This creates the existing ETL pipeline and analytical views.
-
-### 2️⃣ Train and generate retention recommendations
-
-From the repository root:
+### 1️⃣ Create/activate a Python environment
 
 ```bash
-python notebooks/retention_recommendation.py
+python -m venv venv
 ```
 
-The script trains the Random Forest model, calculates churn probabilities, predicts future churn for `vw_JoinData`, assigns risk levels, generates retention recommendations, and saves the result to:
+Windows CMD:
+
+```bat
+venv\Scripts\activate
+```
+
+### 2️⃣ Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3️⃣ Generate churn predictions and retention recommendations
+
+```bash
+python notebooks\retention_recommendation.py
+```
+
+This creates:
 
 ```text
-data/predictions/Retention_Recommendations.csv
+data\predictions\Retention_Recommendations.csv
 ```
 
-### 3️⃣ Power BI
+### 4️⃣ Launch the Streamlit application
 
-Open:
-
-```text
-dashboard/churn_dashboard.pbix
+```bash
+streamlit run app.py
 ```
 
-Import the new CSV as an additional source for the Retention Recommendation page.
+### 5️⃣ Optional: enable GenAI
 
----
+Set the environment variables before starting Streamlit. For example in Windows CMD:
 
-# 🧠 Future GenAI Layer
-
-The retention engine deliberately separates **prediction** from **generation**:
-
-```text
-Random Forest
-      ↓
-Churn Probability
-      ↓
-Business Rules
-      ↓
-Retention Recommendation
-      ↓
-GenAI
-      ↓
-Personalized Retention Strategy
+```bat
+set OPENAI_API_KEY=your_key
+set OPENAI_MODEL=your_model
 ```
 
-GenAI should explain and personalize the structured recommendation rather than replace the supervised churn model.
+For an OpenAI-compatible provider, also set:
+
+```bat
+set OPENAI_BASE_URL=your_provider_endpoint
+```
+
+Then run:
+
+```bash
+streamlit run app.py
+```
 
 ---
 
@@ -294,11 +382,12 @@ GenAI should explain and personalize the structured recommendation rather than r
 |---|---|
 | SQL Server | Data storage, ETL and analytical views |
 | Power BI | Business analytics and dashboards |
-| Python | ML and recommendation pipeline |
+| Python | ML and application layer |
 | Pandas | Data processing |
 | Scikit-Learn | Random Forest churn prediction |
 | Joblib | Model persistence |
-| Jupyter Notebook | Existing ML development |
+| Streamlit | Interactive retention application |
+| OpenAI-compatible API | Optional GenAI personalization |
 
 ---
 
@@ -311,7 +400,13 @@ The upgraded system helps a telecom company:
 * Prioritize retention activity
 * Recommend targeted retention actions
 * Analyze churn drivers
-* Provide a foundation for personalized GenAI retention messaging
+* Generate personalized retention communication
+
+---
+
+# ⚠️ Responsible Use
+
+Churn probability is a model estimate, not certainty. Retention actions should be reviewed against actual customer policy, approved offers, and business constraints before being used with customers. The GenAI layer is instructed not to invent customer facts or commercial offers.
 
 ---
 
