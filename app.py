@@ -5,14 +5,17 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 
 try:
-    from openai import OpenAI
+    from google import genai
 except ImportError:
-    OpenAI = None
+    genai = None
 
 ROOT = Path(__file__).resolve().parent
 DATA_FILE = ROOT / "data" / "predictions" / "Retention_Recommendations.csv"
+
+load_dotenv(ROOT / ".env")
 
 st.set_page_config(page_title="Telecom Retention AI", page_icon="📡", layout="wide")
 st.title("📡 Telecom Customer Retention AI")
@@ -102,19 +105,19 @@ st.subheader("🎯 Retention Recommendation")
 st.info(str(customer["Retention_Recommendation"]))
 
 st.subheader("🤖 AI Retention Strategy")
-api_key = os.getenv("OPENAI_API_KEY")
-base_url = os.getenv("OPENAI_BASE_URL")
-model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+gemini_key = os.getenv("GEMINI_API_KEY")
+gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
 
-if api_key and OpenAI is not None:
+if gemini_key and genai is not None:
     if st.button("Generate Personalized AI Strategy", type="primary"):
         system_prompt = (
             "You are a telecom customer-retention assistant. Generate a concise, professional "
             "retention strategy from supplied customer data. Never invent customer facts, "
             "discounts, prices, service problems, or policies. Treat churn probability as a "
-            "model estimate, not a certainty. Use the supplied rule-based recommendation as "
-            "the primary action guidance. Return: risk summary, recommended action, short "
-            "customer message, and three agent talking points."
+            "model estimate, not a certainty. Do not predict churn yourself. Use the supplied "
+            "rule-based recommendation as the primary action guidance. Return exactly these "
+            "sections: Risk Summary, Recommended Retention Strategy, Customer Message, and "
+            "Agent Talking Points. Keep the customer message professional and concise."
         )
         customer_context = {
             "customer_id": str(customer.get("Customer_ID", "")),
@@ -131,26 +134,19 @@ if api_key and OpenAI is not None:
         }
         prompt = "Customer data:\n" + "\n".join(f"{k}: {v}" for k, v in customer_context.items())
         try:
-            client_kwargs = {"api_key": api_key}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            client = OpenAI(**client_kwargs)
-            response = client.chat.completions.create(
-                model=model_name,
-                temperature=0.2,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
+            client = genai.Client(api_key=gemini_key)
+            response = client.models.generate_content(
+                model=gemini_model,
+                contents=f"{system_prompt}\n\n{prompt}",
             )
-            st.success("AI strategy generated successfully.")
-            st.markdown(response.choices[0].message.content)
+            st.success("Gemini AI strategy generated successfully.")
+            st.markdown(response.text)
         except Exception as exc:
-            st.error(f"LLM request failed: {exc}")
+            st.error(f"Gemini request failed: {exc}")
 else:
     st.warning(
-        "GenAI is not connected. Set OPENAI_API_KEY and optionally OPENAI_BASE_URL / "
-        "OPENAI_MODEL to enable the AI strategy button."
+        "GenAI is not connected. Set GEMINI_API_KEY in .env and optionally GEMINI_MODEL "
+        "to enable the AI strategy button."
     )
     st.markdown("**Rule-based strategy:** " + str(customer["Retention_Recommendation"]))
 
@@ -168,5 +164,5 @@ st.dataframe(
 )
 st.caption(
     "Random Forest predicts churn risk. Business rules recommend retention actions. "
-    "GenAI personalizes the communication when configured."
+    "Gemini 2.5 Pro personalizes the communication when configured."
 )
