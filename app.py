@@ -89,7 +89,7 @@ with left:
 with right:
     st.subheader("Customer Profile")
     profile_columns = [
-        "State", "Contract", "Tenure_in_Months", "Monthly_Charge",
+        "Gender", "State", "Contract", "Tenure_in_Months", "Monthly_Charge",
         "Internet_Type", "Premium_Support", "Value_Deal", "Payment_Method"
     ]
     profile = {
@@ -154,7 +154,7 @@ st.subheader("💬 Ask Your Data")
 st.caption("Ask questions about the filtered customer data and predictions. Python calculates numeric results; Gemini explains them in simple English.")
 question = st.text_input(
     "Ask a question",
-    placeholder="Example: How many high-risk customers are from Maharashtra?",
+    placeholder="Example: How many male customers are predicted to churn?",
     key="data_question",
 )
 
@@ -172,32 +172,44 @@ if st.button("Ask Gemini", type="secondary") and question.strip():
             "average_churn_probability": float(numeric_probability.mean()) if numeric_probability.notna().any() else None,
         }
 
-        if "State" in filtered.columns:
-            summary["high_risk_by_state"] = (
-                filtered[filtered["Risk_Level"].astype(str) == "High"]
-                .groupby("State")
-                .size()
-                .sort_values(ascending=False)
-                .head(25)
-                .to_dict()
-            )
-        if "Contract" in filtered.columns:
-            summary["churners_by_contract"] = (
-                filtered[filtered["Predicted_Churn"] == 1]
-                .groupby("Contract")
-                .size()
-                .sort_values(ascending=False)
-                .to_dict()
-            )
-        if "Retention_Recommendation" in filtered.columns:
-            summary["retention_recommendation_counts"] = (
-                filtered["Retention_Recommendation"].astype(str).value_counts().head(15).to_dict()
-            )
+        # Build category summaries for the columns actually present in the project data.
+        # This allows questions about Gender, State, Contract, Internet Type, etc.
+        category_columns = [
+            "Gender", "Married", "State", "Value_Deal", "Phone_Service",
+            "Multiple_Lines", "Internet_Service", "Internet_Type", "Online_Security",
+            "Online_Backup", "Device_Protection_Plan", "Premium_Support",
+            "Streaming_TV", "Streaming_Movies", "Streaming_Music", "Unlimited_Data",
+            "Contract", "Paperless_Billing", "Payment_Method"
+        ]
+
+        for column in category_columns:
+            if column in filtered.columns:
+                series = filtered[column].fillna("Unknown").astype(str)
+                summary[f"{column}_among_predicted_churners"] = (
+                    series.value_counts().head(25).to_dict()
+                )
+
+        # Numeric summaries for common business questions.
+        numeric_columns = [
+            "Tenure_in_Months", "Monthly_Charge", "Total_Charges",
+            "Churn_Probability", "Churn_Probability_Percent"
+        ]
+        numeric_summary = {}
+        for column in numeric_columns:
+            if column in filtered.columns:
+                values = pd.to_numeric(filtered[column], errors="coerce").dropna()
+                if not values.empty:
+                    numeric_summary[column] = {
+                        "average": round(float(values.mean()), 2),
+                        "minimum": round(float(values.min()), 2),
+                        "maximum": round(float(values.max()), 2),
+                    }
+        summary["numeric_summary"] = numeric_summary
 
         selected_customer_context = {
             key: str(customer.get(key, ""))
             for key in [
-                "Customer_ID", "State", "Contract", "Tenure_in_Months", "Monthly_Charge",
+                "Customer_ID", "Gender", "State", "Contract", "Tenure_in_Months", "Monthly_Charge",
                 "Internet_Type", "Premium_Support", "Value_Deal", "Payment_Method",
                 "Churn_Probability", "Churn_Probability_Percent", "Predicted_Churn",
                 "Risk_Level", "Retention_Priority", "Retention_Recommendation"
@@ -211,9 +223,11 @@ Answer the user's question in simple English.
 
 Rules:
 - Use only the supplied data summary and selected-customer data.
+- The current filtered dataset contains predicted churners from the retention pipeline.
 - Do not invent numbers, customer facts, or business policies.
-- If the supplied data is not enough to answer, clearly say so.
+- For questions such as gender, state, contract, internet type, payment method, or other categories, use the corresponding category summary supplied below.
 - For numeric questions, trust the Python-calculated values in the data summary.
+- If the requested field is not present in the supplied data, clearly say that the field is not available.
 - Explain the answer briefly and clearly for a non-technical business user.
 - If the question is about the selected customer, use the selected-customer data.
 - Do not expose internal Customer_ID unless the user explicitly asks for it.
