@@ -139,22 +139,219 @@ d.metric("High-Risk", f"{m['high_risk']:,}")
 e.metric("Avg Churn Probability", f"{m['avg_probability']:.1%}")
 st.caption("Predicted churn is a model estimate, not confirmed future customer behavior.")
 
+def format_pct(x):
+    try:
+        return f"{float(x) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def build_category_analysis(df, column):
+    """Build industry-style count, share and churn-rate metrics."""
+    if column not in df.columns:
+        return pd.DataFrame()
+
+    x = df.copy()
+
+    x["_pred"] = pd.to_numeric(
+        x["Predicted_Churn"],
+        errors="coerce",
+    ).fillna(0)
+
+    x["_prob"] = pd.to_numeric(
+        x["Churn_Probability"],
+        errors="coerce",
+    )
+
+    total_customers = len(x)
+
+    out = (
+        x.groupby(column, dropna=False)
+        .agg(
+            Customers=("Customer_ID", "count"),
+            Predicted_Churners=("_pred", "sum"),
+            Avg_Churn_Probability=("_prob", "mean"),
+        )
+        .reset_index()
+    )
+
+    out["Predicted_Churners"] = (
+        out["Predicted_Churners"].astype(int)
+    )
+
+    out["Customer_Share"] = (
+        out["Customers"] / total_customers
+        if total_customers
+        else 0
+    )
+
+    out["Predicted_Churn_Rate"] = (
+        out["Predicted_Churners"] / out["Customers"]
+    ).fillna(0)
+
+    total_churners = int(
+        out["Predicted_Churners"].sum()
+    )
+
+    out["Churner_Share"] = (
+        out["Predicted_Churners"] / total_churners
+        if total_churners
+        else 0
+    )
+
+    return out.sort_values(
+        "Predicted_Churn_Rate",
+        ascending=False,
+    )
+
+
+def show_category_analysis(df, column, title):
+    """Display a business-friendly categorical churn analysis."""
+    t = build_category_analysis(
+        df,
+        column,
+    )
+
+    if t.empty:
+        st.info(
+            f"{title} is not available in the prediction data."
+        )
+        return
+
+    # Primary industry KPI: compare segments by churn rate,
+    # not raw churner count, because segment sizes differ.
+    st.markdown(
+        f"**{title} — Predicted Churn Rate (%)**"
+    )
+
+    chart_df = t[
+        [column, "Predicted_Churn_Rate"]
+    ].copy()
+
+    chart_df["Predicted Churn Rate (%)"] = (
+        chart_df["Predicted_Churn_Rate"] * 100
+    )
+
+    chart_df = chart_df.drop(
+        columns=["Predicted_Churn_Rate"]
+    )
+
+    # Horizontal bars are easier to read for many categorical labels.
+    st.bar_chart(
+        chart_df.set_index(column),
+        y="Predicted Churn Rate (%)",
+    )
+
+    top = t.iloc[0]
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Highest-Risk Segment",
+        str(top[column]),
+    )
+
+    c2.metric(
+        "Highest Churn Rate",
+        format_pct(top["Predicted_Churn_Rate"]),
+    )
+
+    c3.metric(
+        "Predicted Churners",
+        f"{int(t['Predicted_Churners'].sum()):,}",
+    )
+
+    # Keep counts for operational context, but make percentages
+    # the primary comparison metrics.
+    show = t.rename(
+        columns={
+            column: title,
+            "Customers": "Customers",
+            "Predicted_Churners": "Predicted Churners",
+        }
+    ).copy()
+
+    show["Customer Share"] = show[
+        "Customer_Share"
+    ].map(format_pct)
+
+    show["Churner Share"] = show[
+        "Churner_Share"
+    ].map(format_pct)
+
+    show["Predicted Churn Rate"] = show[
+        "Predicted_Churn_Rate"
+    ].map(format_pct)
+
+    show["Avg Churn Probability"] = show[
+        "Avg_Churn_Probability"
+    ].map(format_pct)
+
+    show = show[
+        [
+            title,
+            "Customers",
+            "Customer Share",
+            "Predicted Churners",
+            "Churner Share",
+            "Predicted Churn Rate",
+            "Avg Churn Probability",
+        ]
+    ]
+
+    st.dataframe(
+        show,
+        width="stretch",
+        hide_index=True,
+    )
+
+
 st.subheader("📈 Churn Analysis")
-tabs = st.tabs(["Contract", "State", "Internet Type", "Gender", "Risk", "Priority"])
-for tab, col in zip(tabs, ["Contract", "State", "Internet_Type", "Gender", "Risk_Level", "Retention_Priority"]):
+
+st.caption(
+    "Industry-style BI analysis: use counts for volume, "
+    "customer share for population mix, and predicted churn "
+    "rate for fair segment-to-segment comparison."
+)
+
+tabs = st.tabs(
+    [
+        "Contract",
+        "State",
+        "Internet Type",
+        "Gender",
+        "Risk",
+        "Priority",
+    ]
+)
+
+for tab, column, title in zip(
+    tabs,
+    [
+        "Contract",
+        "State",
+        "Internet_Type",
+        "Gender",
+        "Risk_Level",
+        "Retention_Priority",
+    ],
+    [
+        "Contract",
+        "State",
+        "Internet Type",
+        "Gender",
+        "Risk Level",
+        "Retention Priority",
+    ],
+):
     with tab:
-        t = segment_table(filtered, col)
-        if t.empty:
-            st.info(f"{col.replace('_', ' ')} is not available.")
-        else:
-            st.bar_chart(t.head(15).set_index(col)["Predicted_Churn_Rate"])
-            show = t.copy()
-            show["Predicted_Churn_Rate"] = (show["Predicted_Churn_Rate"] * 100).round(2).astype(str) + "%"
-            show["Avg_Churn_Probability"] = (show["Avg_Churn_Probability"] * 100).round(2).astype(str) + "%"
-            st.dataframe(show, width="stretch", hide_index=True)
+        show_category_analysis(
+            filtered,
+            column,
+            title,
+        )
 
 
-# ----------------------------- Customer 360 ---------------------------------
 st.subheader("👤 Customer 360")
 cs = filtered[filtered["Predicted_Churn"].astype(int) == 1].copy()
 if cs.empty:
@@ -213,7 +410,7 @@ def get_plan(question, df):
 User question: {question}
 
 Schema: {{"type":"overview|group|numeric|customer","group_by":null or exact categorical column,"target_column":null or exact numeric column,"metric":"customers|predicted_churners|predicted_churn_rate|average_churn_probability|average|min|max","top_n":10,"sort":"asc|desc"}}
-Rules: churn/churners=Predicted_Churn; churn rate=Predicted_Churn_Rate; female/male/state/contract/internet/risk/priority questions use that exact column; average monthly charge uses target_column=Monthly_Charge and no group; top N sets top_n; customer questions use type=customer. Do not invent columns."""
+Rules: churn/churners=Predicted_Churn; churn rate=Predicted_Churn_Rate; female/male/state/contract/internet/risk/priority questions use that exact column; average monthly charge uses target_column=Monthly_Charge and no group; top N sets top_n; Customer-ID questions are handled by Python before this planner. Never classify female/male/gender/state/contract/internet/risk/priority questions as customer questions. Do not invent columns."""
     text = gemini_call(prompt).strip()
     text = re.sub(r"^```json\s*|\s*```$", "", text, flags=re.I).strip()
     return json.loads(text)
@@ -259,12 +456,88 @@ def fallback_plan(question, df):
     return {"type": typ, "group_by": group, "target_column": target, "metric": metric, "top_n": n, "sort": "desc"}
 
 
+
+def normalize_plan(plan, question, df):
+    """Sanitize Gemini's plan; deterministic rules override ambiguous intent."""
+    if not isinstance(plan, dict):
+        return fallback_plan(question, df)
+
+    allowed_types = {"overview", "group", "numeric"}
+    allowed_metrics = {
+        "customers", "predicted_churners", "predicted_churn_rate",
+        "average_churn_probability", "average", "min", "max"
+    }
+
+    typ = plan.get("type") if plan.get("type") in allowed_types else None
+    group = plan.get("group_by")
+    if not isinstance(group, str) or group not in df.columns:
+        group = None
+    target = plan.get("target_column")
+    if not isinstance(target, str) or target not in df.columns:
+        target = None
+    metric = plan.get("metric") if plan.get("metric") in allowed_metrics else None
+
+    raw_n = plan.get("top_n")
+    try:
+        n = int(raw_n) if raw_n is not None else 10
+    except (TypeError, ValueError):
+        n = 10
+    n = max(1, min(50, n))
+
+    sort = plan.get("sort") if plan.get("sort") in {"asc", "desc"} else "desc"
+    q = question.lower()
+
+    # Deterministic group intent. This prevents "female customer" from becoming Customer-360.
+    for words, column in [
+        (["female", "male", "gender"], "Gender"),
+        (["state"], "State"),
+        (["contract"], "Contract"),
+        (["internet"], "Internet_Type"),
+        (["risk"], "Risk_Level"),
+        (["priority"], "Retention_Priority"),
+    ]:
+        if any(w in q for w in words) and column in df.columns:
+            group = column
+            typ = "group"
+            break
+
+    if "churn rate" in q or "churn percentage" in q or "churn percent" in q:
+        metric = "predicted_churn_rate"
+    elif any(x in q for x in ["predicted churners", "predicted churn", "churners", "likely to churn"]):
+        metric = "predicted_churners"
+
+    if "average monthly charge" in q or "average monthly" in q:
+        metric = "average"
+        target = "Monthly_Charge" if "Monthly_Charge" in df.columns else target
+        typ = "numeric"
+        group = None
+
+    if group is not None:
+        typ = "group"
+    if typ is None:
+        typ = "numeric" if metric in {"average", "min", "max"} else "overview"
+    if metric is None:
+        metric = "customers"
+
+    return {"type": typ, "group_by": group, "target_column": target,
+            "metric": metric, "top_n": n, "sort": sort}
+
 def execute(plan, df, question_text):
     typ = plan.get("type", "overview")
     group = plan.get("group_by")
     target = plan.get("target_column")
     metric = plan.get("metric", "customers")
-    n = max(1, min(50, int(plan.get("top_n", 10))))
+
+    # Gemini can return top_n as null.
+    # Never call int(None).
+    raw_n = plan.get("top_n", 10)
+
+    try:
+        n = int(raw_n) if raw_n is not None else 10
+    except (TypeError, ValueError):
+        n = 10
+
+    n = max(1, min(50, n))
 
     if typ == "customer":
         row = find_customer(question_text, df)
@@ -299,15 +572,20 @@ def execute(plan, df, question_text):
 
 if ask and question.strip():
     try:
-        if find_customer(question, filtered) is not None:
+        if find_customer(question, full_df) is not None:
             plan = {"type": "customer", "group_by": None, "target_column": None, "metric": "customers", "top_n": 1, "sort": "desc"}
         else:
             try:
-                plan = get_plan(question, filtered)
+                raw_plan = get_plan(question, filtered)
+                plan = normalize_plan(raw_plan, question, filtered)
             except Exception:
                 plan = fallback_plan(question, filtered)
 
-        result = execute(plan, filtered, question)
+        result = execute(
+                plan,
+                full_df if plan.get("type") == "customer" else filtered,
+                question,
+            )
         st.markdown("### 📊 Analysis Result")
 
         if result["kind"] == "overview":

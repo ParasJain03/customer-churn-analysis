@@ -3,5 +3,5 @@ scikit-learn
 openpyxl
 joblib
 streamlit
-google-genai
 python-dotenv
+google-genai
