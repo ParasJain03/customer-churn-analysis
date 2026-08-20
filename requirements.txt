@@ -1,7 +1,7 @@
-pandas
-scikit-learn
-openpyxl
-joblib
-streamlit
-python-dotenv
-google-genai
+streamlit==1.61.1
+pandas==3.0.5
+scikit-learn==1.9.0
+openpyxl==3.1.5
+joblib==1.5.3
+python-dotenv==1.2.3
+groq==1.6.0
