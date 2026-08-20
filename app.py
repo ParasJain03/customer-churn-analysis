@@ -9,9 +9,9 @@ import streamlit as st
 from dotenv import load_dotenv
 
 try:
-    from google import genai
+    from groq import Groq
 except ImportError:
-    genai = None
+    Groq = None
 
 ROOT = Path(__file__).resolve().parent
 RETENTION_FILE = ROOT / "data" / "predictions" / "Retention_Recommendations.csv"
@@ -83,32 +83,66 @@ def find_customer(question, df):
     return None
 
 
-def gemini_call(prompt):
-    """Make one isolated Gemini request and always close its client.
-
-    Streamlit reruns the script frequently. Keeping a client alive across reruns
-    can leave a closed client object behind. A fresh client per request avoids
-    the 'Cannot send a request, as the client has been closed' error.
-    """
-    key = os.getenv("GEMINI_API_KEY")
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    if not key:
-        raise RuntimeError("Gemini is not connected. Add GEMINI_API_KEY to Streamlit Secrets or .env")
-    if genai is None:
-        raise RuntimeError("google-genai is not installed. Run: pip install google-genai")
-
-    client = genai.Client(api_key=key)
+def get_secret(name, default=None):
+    """Read Streamlit Cloud secrets first, then local environment variables."""
     try:
-        response = client.models.generate_content(model=model, contents=prompt)
-        text = getattr(response, "text", None)
-        if not text:
-            raise RuntimeError("Gemini returned an empty response.")
-        return text
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
+        value = st.secrets.get(name)
+        if value:
+            return value
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+
+def groq_call(prompt):
+    """Make one fresh Groq request per Streamlit interaction.
+
+    Python remains the source of truth for all dashboard calculations.
+    Groq is used only to understand questions and explain verified results.
+    """
+    key = get_secret("GROQ_API_KEY")
+    model = get_secret("GROQ_MODEL", "openai/gpt-oss-20b")
+
+    if not key:
+        raise RuntimeError(
+            "Groq is not connected. Add GROQ_API_KEY to Streamlit Secrets or .env"
+        )
+
+    if Groq is None:
+        raise RuntimeError(
+            "groq is not installed. Run: pip install groq"
+        )
+
+    client = Groq(api_key=key)
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a telecom business intelligence assistant. "
+                    "Use only the supplied verified Python result. "
+                    "Never recalculate, change, or invent numbers. "
+                    "Use simple professional English. "
+                    "Clearly say predicted churn, not confirmed churn."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        temperature=0.1,
+        max_tokens=900,
+    )
+
+    text = response.choices[0].message.content
+    if not text:
+        raise RuntimeError("Groq returned an empty response.")
+
+    return text.strip()
+
 
 
 # ----------------------------- Filters --------------------------------------
@@ -375,7 +409,7 @@ st.write("**🎯 Retention Recommendation**")
 st.info(str(customer.get("Retention_Recommendation", "No recommendation available.")))
 
 
-# ----------------------------- Gemini retention -----------------------------
+# ----------------------------- Groq retention -----------------------------
 st.subheader("🤖 AI Retention Strategy")
 if st.button("Generate Personalized AI Strategy", type="primary"):
     try:
@@ -383,16 +417,16 @@ if st.button("Generate Personalized AI Strategy", type="primary"):
 
 Customer data:
 {json.dumps({k: str(customer[k]) for k in customer.index}, default=str)}"""
-        st.markdown(gemini_call(prompt))
-        st.success(f"Gemini strategy generated using {os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')}.")
+        st.markdown(groq_call(prompt))
+        st.success(f"Groq strategy generated using {os.getenv('GROQ_MODEL', 'groq-2.5-flash')}.")
     except Exception as exc:
-        st.error(f"Gemini request failed: {exc}")
+        st.error(f"Groq request failed: {exc}")
 
 
 # ----------------------------- AI Data Analyst -------------------------------
 st.divider()
 st.subheader("💬 AI Data Analyst")
-st.caption("Power BI-style natural-language analysis. Python calculates every number from the current filtered data; Gemini understands the question and explains the result in simple English.")
+st.caption("Power BI-style natural-language analysis. Python calculates every number from the current filtered data; Groq understands the question and explains the result in simple English.")
 st.success(f"Connected to {len(full_df):,} complete customer prediction rows.")
 
 question = st.text_input(
@@ -404,14 +438,14 @@ ask = st.button("🔍 Analyze", type="primary")
 
 
 def get_plan(question, df):
-    """Use Gemini only to classify the question; Python calculates the answer."""
+    """Use Groq only to classify the question; Python calculates the answer."""
     columns = [str(c) for c in df.columns]
     prompt = f"""You are a BI query planner. Return JSON only. Available columns: {json.dumps(columns)}.
 User question: {question}
 
 Schema: {{"type":"overview|group|numeric|customer","group_by":null or exact categorical column,"target_column":null or exact numeric column,"metric":"customers|predicted_churners|predicted_churn_rate|average_churn_probability|average|min|max","top_n":10,"sort":"asc|desc"}}
 Rules: churn/churners=Predicted_Churn; churn rate=Predicted_Churn_Rate; female/male/state/contract/internet/risk/priority questions use that exact column; average monthly charge uses target_column=Monthly_Charge and no group; top N sets top_n; Customer-ID questions are handled by Python before this planner. Never classify female/male/gender/state/contract/internet/risk/priority questions as customer questions. Do not invent columns."""
-    text = gemini_call(prompt).strip()
+    text = groq_call(prompt).strip()
     text = re.sub(r"^```json\s*|\s*```$", "", text, flags=re.I).strip()
     return json.loads(text)
 
@@ -458,7 +492,7 @@ def fallback_plan(question, df):
 
 
 def normalize_plan(plan, question, df):
-    """Sanitize Gemini's plan; deterministic rules override ambiguous intent."""
+    """Sanitize Groq's plan; deterministic rules override ambiguous intent."""
     if not isinstance(plan, dict):
         return fallback_plan(question, df)
 
@@ -528,7 +562,7 @@ def execute(plan, df, question_text):
     target = plan.get("target_column")
     metric = plan.get("metric", "customers")
 
-    # Gemini can return top_n as null.
+    # Groq can return top_n as null.
     # Never call int(None).
     raw_n = plan.get("top_n", 10)
 
@@ -659,7 +693,7 @@ if ask and question.strip():
         else:
             st.warning("No suitable numeric column was found for this question.")
 
-        # Gemini explains only Python-calculated results; it does not calculate dashboard numbers.
+        # Groq explains only Python-calculated results; it does not calculate dashboard numbers.
         explanation_data = {k: v for k, v in result.items() if k != "row"}
         if result["kind"] == "group":
             explanation_data["rows"] = result["table"].head(10).to_dict(orient="records")
@@ -668,10 +702,10 @@ if ask and question.strip():
 User question: {question}
 Calculated result: {json.dumps(explanation_data, default=str)}"""
         try:
-            st.markdown("### 🤖 Gemini Business Insights")
-            st.markdown(gemini_call(explanation_prompt))
+            st.markdown("### 🤖 Groq Business Insights")
+            st.markdown(groq_call(explanation_prompt))
         except Exception as exc:
-            st.caption(f"Gemini explanation unavailable: {exc}")
+            st.caption(f"Groq explanation unavailable: {exc}")
 
     except Exception as exc:
         st.error(f"Analysis failed: {exc}")
