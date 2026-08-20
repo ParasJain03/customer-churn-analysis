@@ -418,7 +418,6 @@ if st.button("Generate Personalized AI Strategy", type="primary"):
 Customer data:
 {json.dumps({k: str(customer[k]) for k in customer.index}, default=str)}"""
         st.markdown(groq_call(prompt))
-        st.success(f"Groq strategy generated using {os.getenv('GROQ_MODEL', 'groq-2.5-flash')}.")
     except Exception as exc:
         st.error(f"Groq request failed: {exc}")
 
@@ -426,8 +425,11 @@ Customer data:
 # ----------------------------- AI Data Analyst -------------------------------
 st.divider()
 st.subheader("💬 AI Data Analyst")
-st.caption("Power BI-style natural-language analysis. Python calculates every number from the current filtered data; Groq understands the question and explains the result in simple English.")
-st.success(f"Connected to {len(full_df):,} complete customer prediction rows.")
+st.caption(
+    "Power BI-style natural-language analysis. "
+    "Ask questions about customers, churn, risk, retention, "
+    "and business performance."
+)
 
 question = st.text_input(
     "Ask Your Data",
