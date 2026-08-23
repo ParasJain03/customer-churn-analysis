@@ -2,7 +2,7 @@
 
 🚀 **End-to-End Telecom Analytics | SQL | Power BI | Machine Learning | Retention Intelligence | Streamlit | GenAI**
 
-An end-to-end telecom customer analytics and retention decision-support system. The project processes customer data using **SQL Server**, analyzes churn using **Power BI**, predicts future churn using **Random Forest**, converts model probability into risk and retention priority, recommends business actions, and provides an optional **GenAI-powered personalized retention strategy** through a Streamlit application.
+An end-to-end telecom customer analytics and retention decision-support system. The project processes customer data using **SQL Server**, analyzes churn using **Power BI**, predicts future churn using **Random Forest**, converts model probability into risk and retention priority, recommends business actions, and provides a **Groq-powered GenAI personalized retention strategy and natural-language AI Data Analyst** through a Streamlit application.
 
 This project is extended for **Use Case 12: Telecom Customer Churn Prediction & Retention Recommendation**.
 
@@ -17,7 +17,7 @@ The solution therefore has four layers:
 1. **Churn Prediction** — estimate the probability that a customer will churn.
 2. **Risk & Priority** — convert probability into an operational risk level and retention priority.
 3. **Retention Recommendation** — map customer signals to actionable retention interventions.
-4. **GenAI Personalization** — turn the structured recommendation into a customer-specific strategy/message when an approved LLM endpoint is configured.
+4. **GenAI Personalization & AI Data Analyst** — use Groq to explain verified analytics in natural language and generate personalized retention strategies.
 
 ---
 
@@ -48,7 +48,11 @@ Retention_Recommendations.csv
         ↓
 Streamlit Customer Retention App
         ↓
-Optional GenAI Personalized Strategy
+Python Data Analytics
+        ↓
+Groq GenAI
+        ↓
+Natural-Language Insights / Personalized Strategy
 ```
 
 ---
@@ -90,10 +94,12 @@ Random Forest Training        Future Churn Prediction
             ↓           ↓
         Power BI    Streamlit
                         ↓
-                       GenAI
+                Python Analytics
+                        ↓
+                     Groq GenAI
 ```
 
-The existing SQL ETL creates `vw_ChurnData` for `Stayed/Churned` customers and `vw_JoinData` for `Joined` customers. The new workflow reuses that architecture rather than replacing it.
+The existing SQL ETL creates `vw_ChurnData` for `Stayed/Churned` customers and `vw_JoinData` for `Joined` customers. The Use Case 12 workflow reuses that architecture rather than replacing it.
 
 ---
 
@@ -111,6 +117,7 @@ The existing **Random Forest Classifier** is retained.
 6. Train Random Forest
 7. Evaluate classification performance
 8. Generate **churn probability** using `predict_proba()`
+9. Generate leakage-safe predictions for the complete cleaned customer population
 
 ### Latest local validation
 
@@ -122,8 +129,9 @@ Churn precision: 84%
 Churn recall: 63%
 Churn F1: 72%
 ROC-AUC: 0.905
-Predicted churners: 371
 ```
+
+The prediction pipeline generates predictions for **6,007 complete cleaned customer records** for dashboard and retention analytics.
 
 These metrics are from the local execution of `notebooks/retention_recommendation.py` and should be regenerated when the data/model changes.
 
@@ -166,6 +174,7 @@ The workflow writes:
 
 ```text
 data/predictions/Retention_Recommendations.csv
+data/predictions/All_Customer_Predictions.csv
 ```
 
 Important fields include:
@@ -184,7 +193,7 @@ Retention_Recommendation
 
 # 🖥️ Streamlit Application
 
-The repository now includes:
+The repository includes:
 
 ```text
 app.py
@@ -196,10 +205,11 @@ The application provides:
 * Churn probability
 * Risk level
 * Retention priority
-* Customer profile
+* Customer profile / Customer 360
 * Rule-based retention recommendation
 * Retention priority list
-* Optional GenAI personalized strategy
+* AI Data Analyst for natural-language analytics
+* Groq-powered personalized retention strategy
 
 Run it from the repository root:
 
@@ -207,41 +217,104 @@ Run it from the repository root:
 streamlit run app.py
 ```
 
-The app reads the generated `data/predictions/Retention_Recommendations.csv` file.
+The app reads the generated prediction CSV files from `data/predictions/`.
 
 ---
 
-# 🤖 GenAI Integration
+# 🤖 Groq GenAI Integration
 
-The GenAI layer is implemented in `app.py` using the OpenAI Python client and an OpenAI-compatible chat endpoint.
+The GenAI layer is implemented in `app.py` using the **Groq Python SDK**.
 
-The LLM **does not predict churn**. The Random Forest model remains responsible for churn prediction. The LLM receives the model output, customer attributes, risk level, priority, and rule-based recommendation and converts them into a concise retention strategy.
+### API and model
+
+```text
+Provider: Groq API
+Model: openai/gpt-oss-20b
+```
+
+The application uses:
+
+```python
+GROQ_MODEL = "openai/gpt-oss-20b"
+```
+
+The model is used for the **natural-language explanation and personalized retention strategy layer**. It does **not** replace the Random Forest churn model.
+
+### Architecture
 
 ```text
 Random Forest
       ↓
 Churn Probability
       ↓
-Business Rules
+Python Analytics / Business Rules
       ↓
-Retention Recommendation
+Verified Result / Retention Recommendation
       ↓
-LLM
+Groq API
       ↓
-Personalized Retention Strategy
+openai/gpt-oss-20b
+      ↓
+Natural-Language Explanation / Personalized Strategy
 ```
 
-Configure the optional integration using environment variables:
+For the **AI Data Analyst**, Python remains the source of truth for numerical calculations. The dashboard data is filtered and aggregated using Python, and the verified result is supplied to Groq for explanation. This reduces the risk of the LLM inventing or incorrectly calculating business metrics.
+
+### Configuration
+
+Set the Groq API key using an environment variable or Streamlit Secrets.
+
+Local `.env` example:
 
 ```text
-OPENAI_API_KEY=your_key
-OPENAI_BASE_URL=optional_openai_compatible_endpoint
-OPENAI_MODEL=your_model
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=openai/gpt-oss-20b
 ```
 
-Use `.env.example` as the template. **Never commit a real API key to GitHub.**
+For Streamlit Cloud, add the same values under **App Settings → Secrets**.
 
-If no API key is configured, the Streamlit application still works and displays the deterministic retention recommendation.
+**Never commit a real API key to GitHub.**
+
+If no Groq API key is configured, the core Streamlit dashboard and deterministic retention recommendation layer can still be used; only the GenAI-powered explanation/strategy functionality requires the API.
+
+---
+
+# 💬 AI Data Analyst
+
+The application includes a Power BI-style natural-language analytics layer.
+
+Users can ask questions about:
+
+* Customer counts
+* Predicted churners
+* Predicted churn rate
+* Churn probability
+* Gender, contract, state and internet-type segments
+* Risk and retention priority
+* Individual customer information using Customer ID
+* Other supported dashboard analytics
+
+### Accuracy-first design
+
+```text
+User Question
+      ↓
+Python Analytics
+      ↓
+Filter / Aggregate / Calculate
+      ↓
+Verified Numerical Result
+      ↓
+Groq GenAI
+      ↓
+Simple Business Explanation
+```
+
+The key design principle is:
+
+> **Python calculates; GenAI explains.**
+
+This keeps core numerical business metrics deterministic while still giving users a conversational analytics experience.
 
 ---
 
@@ -291,8 +364,8 @@ customer-churn-analysis
 │   ├── processed
 │   │   └── Prediction_Data.xlsx
 │   └── predictions
-│       ├── Predictions.csv.xlsx
-│       └── Retention_Recommendations.csv
+│       ├── Retention_Recommendations.csv
+│       └── All_Customer_Predictions.csv
 │
 ├── notebooks
 │   ├── churn_prediction.ipynb
@@ -345,30 +418,19 @@ This creates:
 
 ```text
 data\predictions\Retention_Recommendations.csv
+data\predictions\All_Customer_Predictions.csv
 ```
 
-### 4️⃣ Launch the Streamlit application
+### 4️⃣ Configure Groq
 
-```bash
-streamlit run app.py
+Create a `.env` file locally or configure Streamlit Secrets:
+
+```text
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=openai/gpt-oss-20b
 ```
 
-### 5️⃣ Optional: enable GenAI
-
-Set the environment variables before starting Streamlit. For example in Windows CMD:
-
-```bat
-set OPENAI_API_KEY=your_key
-set OPENAI_MODEL=your_model
-```
-
-For an OpenAI-compatible provider, also set:
-
-```bat
-set OPENAI_BASE_URL=your_provider_endpoint
-```
-
-Then run:
+### 5️⃣ Launch the Streamlit application
 
 ```bash
 streamlit run app.py
@@ -382,12 +444,13 @@ streamlit run app.py
 |---|---|
 | SQL Server | Data storage, ETL and analytical views |
 | Power BI | Business analytics and dashboards |
-| Python | ML and application layer |
-| Pandas | Data processing |
+| Python | ML, analytics and application layer |
+| Pandas | Data processing and deterministic analytics |
 | Scikit-Learn | Random Forest churn prediction |
 | Joblib | Model persistence |
 | Streamlit | Interactive retention application |
-| OpenAI-compatible API | Optional GenAI personalization |
+| Groq API | GenAI inference |
+| `openai/gpt-oss-20b` | Natural-language analytics explanation and retention strategy |
 
 ---
 
@@ -400,13 +463,14 @@ The upgraded system helps a telecom company:
 * Prioritize retention activity
 * Recommend targeted retention actions
 * Analyze churn drivers
+* Ask natural-language questions about prediction data
 * Generate personalized retention communication
 
 ---
 
 # ⚠️ Responsible Use
 
-Churn probability is a model estimate, not certainty. Retention actions should be reviewed against actual customer policy, approved offers, and business constraints before being used with customers. The GenAI layer is instructed not to invent customer facts or commercial offers.
+Churn probability is a model estimate, not certainty. Retention actions should be reviewed against actual customer policy, approved offers, and business constraints before being used with customers. The GenAI layer is instructed to use verified customer information and not invent customer facts or commercial offers.
 
 ---
 
